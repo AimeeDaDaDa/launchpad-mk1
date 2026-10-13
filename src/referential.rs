@@ -110,25 +110,27 @@ impl Referential {
   pub fn init(&mut self, folder: String) {
     self.pages = vec![];
     self.current_page = 0;
-    let paths = fs::read_dir(folder.as_str()).unwrap();
+    // read_dir order is filesystem dependent, so sort to keep pages stable.
+    // A missing folder simply yields no pages; main() reports that.
+    let mut paths: Vec<std::path::PathBuf> = match fs::read_dir(folder.as_str()) {
+      Ok(entries) => entries.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_file()).collect(),
+      Err(_) => return,
+    };
+    paths.sort();
     for path in paths {
-      let path = path.unwrap().path();
+      let mut page = Page::new(vec![]);
 
-      if path.is_file() {
-        let mut page = Page::new(vec![]);
-
-        let content = fs::read_to_string(path.clone()).unwrap();
-        // Create new for each line in content
-        for line in content.lines() {
-          let mut line = line.split(';');
-          let note_id = line.next().unwrap().parse::<u8>().unwrap();
-          let path = String::from(line.next().unwrap());
-          let color = line.next().unwrap().parse::<u8>().unwrap();
-          // We need to leak because the path can live as much as the program
-          page.notes.push(Note::new(note_id, Box::leak(path.into_boxed_str()), color));
-        }
-        self.pages.push(page);
+      let content = fs::read_to_string(path.clone()).unwrap();
+      // Create new for each line in content
+      for line in content.lines() {
+        let mut line = line.split(';');
+        let note_id = line.next().unwrap().parse::<u8>().unwrap();
+        let path = String::from(line.next().unwrap());
+        let color = line.next().unwrap().parse::<u8>().unwrap();
+        // We need to leak because the path can live as much as the program
+        page.notes.push(Note::new(note_id, Box::leak(path.into_boxed_str()), color));
       }
+      self.pages.push(page);
     }
   }
 

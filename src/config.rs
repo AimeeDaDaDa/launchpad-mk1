@@ -6,6 +6,10 @@ pub struct Config {
     midi_out_device: Option<String>,
     output_device: Option<String>,
     virtual_device: Option<String>,
+    /// 本地监听开关：false/0/no/off 时完全不建本地输出流，声音只送 virtual_device
+    local_monitor: Option<String>,
+    /// 送 virtual_device（VoiceMeeter）的音量，缺省 0.10（与上游一致）
+    virtual_volume: Option<String>,
     bookmark_1: Option<String>,
     bookmark_2: Option<String>,
     bookmark_3: Option<String>,
@@ -70,6 +74,26 @@ impl Config {
 
     pub fn get_hold_to_mode(&self) -> &HoldMode {
         &self.hold_to
+    }
+
+    /// 本地监听是否开启。缺省 true（保持上游行为）；写成 false/0/no/off 则只走虚拟设备。
+    pub fn local_monitor_enabled(&self) -> bool {
+        match self.local_monitor.as_deref() {
+            None => true,
+            Some(raw) => !matches!(
+                raw.trim().to_ascii_lowercase().as_str(),
+                "false" | "0" | "no" | "off" | "none" | "disabled" | ""
+            ),
+        }
+    }
+
+    /// 送虚拟设备（VoiceMeeter）的音量。缺省 0.10，可写成 0.0 ~ 2.0。
+    pub fn virtual_volume(&self) -> f32 {
+        self.virtual_volume
+            .as_deref()
+            .and_then(|raw| raw.trim().parse::<f32>().ok())
+            .map(|v| v.clamp(0.0, 2.0))
+            .unwrap_or(0.10)
     }
 
     pub fn swap_hold_to_play(&mut self) {

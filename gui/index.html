@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Launchpad 声音板控制台</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --line: #e4e6eb; --txt: #1f2329;
+    --sub: #646a73; --accent: #2563eb; --accent-2: #1d4ed8;
+    --green: #1e8e3e; --amber: #e8a000; --yellow: #c9a400; --red: #d93025;
+    --pad-empty: #3c4043; --pad-line: #202124;
+    --ok: #188038; --warn: #b06000; --err: #d93025;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font: 14px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    background: var(--bg); color: var(--txt); min-height: 100vh;
+    display: flex; flex-direction: column;
+  }
+  button { font: inherit; cursor: pointer; border: 1px solid var(--line); background: #fff;
+    color: var(--txt); border-radius: 6px; padding: 5px 12px; }
+  button:hover { border-color: #c8cdd4; background: #fafbfc; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover { background: var(--accent-2); }
+  button.danger { color: var(--err); }
+  button.danger:hover { border-color: var(--err); background: #fef2f2; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  select, input[type=text] {
+    font: inherit; width: 100%; padding: 5px 8px; border: 1px solid var(--line);
+    border-radius: 6px; background: #fff; color: var(--txt);
+  }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px; }
+  .card h3 { font-size: 13px; color: var(--sub); font-weight: 600; margin-bottom: 10px;
+    display: flex; align-items: center; justify-content: space-between; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  .muted { color: var(--sub); font-size: 12px; }
+
+  /* ---------- 顶栏 ---------- */
+  header {
+    display: flex; align-items: center; gap: 12px; padding: 10px 18px;
+    background: var(--card); border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 50;
+  }
+  header .title { font-size: 16px; font-weight: 700; }
+  header .title small { font-weight: 400; color: var(--sub); margin-left: 8px; font-size: 12px; }
+  header .spacer { flex: 1; }
+  #runState { font-size: 13px; padding: 3px 10px; border-radius: 99px; }
+  #runState.off { background: #f1f3f5; color: var(--sub); }
+  #runState.on { background: #e6f4ea; color: var(--ok); font-weight: 600; }
+
+  /* ---------- 主体三栏 ---------- */
+  main {
+    display: grid; grid-template-columns: 265px 1fr 280px; gap: 12px;
+    padding: 12px 18px; align-items: start; flex: 1;
+  }
+  .col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+  .field { margin-bottom: 10px; }
+  .field label { display: block; font-size: 12px; color: var(--sub); margin-bottom: 3px; }
+
+  /* ---------- 页面列表 ---------- */
+  #pageList { max-height: 220px; overflow: auto; border: 1px solid var(--line);
+    border-radius: 6px; }
+  #pageList .item { display: flex; justify-content: space-between; padding: 6px 10px;
+    cursor: pointer; border-bottom: 1px solid var(--line); font-size: 13px; }
+  #pageList .item:last-child { border-bottom: 0; }
+  #pageList .item:hover { background: #f6f8fa; }
+  #pageList .item.sel { background: #e8f0fe; color: var(--accent-2); font-weight: 600; }
+  #pageList .item .cnt { color: var(--sub); font-size: 12px; }
+  #pageList .item.sel .cnt { color: var(--accent); }
+  #pageList .empty { padding: 14px; text-align: center; color: var(--sub); font-size: 12px; }
+  .btn-row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .btn-row button { flex: 1; padding: 5px 4px; font-size: 12px; white-space: nowrap; }
+
+  /* ---------- 语言包 ---------- */
+  #packList { max-height: 170px; overflow: auto; font-size: 13px; }
+  #packList .item { display: flex; justify-content: space-between; padding: 5px 8px;
+    border-radius: 6px; cursor: pointer; }
+  #packList .item:hover { background: #f6f8fa; }
+  #packList .item.sel { background: #e8f0fe; color: var(--accent-2); font-weight: 600; }
+  #packList .cnt { color: var(--sub); font-size: 12px; }
+
+  /* ---------- 网格 ---------- */
+  #gridWrap { display: flex; flex-direction: column; gap: 10px; }
+  #pageTitle { display: flex; align-items: baseline; gap: 10px; }
+  #pageTitle b { font-size: 17px; }
+  #ccRow { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+  #ccRow .cc {
+    background: #f1f3f5; border: 1px dashed #c8cdd4; border-radius: 6px;
+    text-align: center; font-size: 11px; color: var(--sub); padding: 4px 2px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  #grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+  .pad {
+    position: relative; aspect-ratio: 1 / 1; border-radius: 8px; border: 2px solid var(--pad-line);
+    background: var(--pad-empty); color: #fff; cursor: pointer; overflow: hidden;
+    display: flex; flex-direction: column; justify-content: flex-end;
+    padding: 4px; text-align: left; transition: transform .05s;
+  }
+  .pad:hover { transform: scale(1.04); }
+  .pad .n { position: absolute; top: 3px; left: 5px; font-size: 10px; opacity: .55; }
+  .pad .f { font-size: 11px; line-height: 1.25; word-break: break-all;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .pad.empty .f { opacity: .35; font-style: italic; }
+  .pad.sel { outline: 3px solid var(--accent); outline-offset: 1px; }
+  .pad.c-green  { background: var(--green); }
+  .pad.c-amber  { background: var(--amber); }
+  .pad.c-yellow { background: var(--yellow); }
+  .pad.c-red    { background: var(--red); }
+  .pad.c-off    { background: #5f6368; }
+  .pad.drop { outline: 3px dashed #fff; outline-offset: -4px; }
+  .pad.playing { animation: pulse .5s ease-in-out infinite alternate; }
+  @keyframes pulse { from { filter: brightness(1); } to { filter: brightness(1.5); } }
+  .pad.hit { outline: 3px solid #fff; outline-offset: -4px; box-shadow: 0 0 0 3px var(--accent); }
+
+  /* ---------- 按键监视 ---------- */
+  #watchCard .big { font-size: 20px; font-weight: 700; }
+  #watchCard .big small { font-size: 12px; color: var(--sub); font-weight: 400; margin-left: 6px; }
+  #evList { max-height: 150px; overflow: auto; background: #f6f8fa; border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 8px; font: 12px/1.6 Consolas, "Cascadia Mono", monospace;
+    margin-top: 8px; }
+  #evList .ev { white-space: nowrap; }
+  #evList .ev.note_on { color: var(--green); font-weight: 600; }
+  #evList .ev.note_off { color: var(--sub); }
+  #evList .ev.cc { color: #7b1fa2; }
+
+  /* ---------- 编辑器 ---------- */
+  #editor .note-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+  #editor .note-head b { font-size: 15px; }
+  #curFile { background: #f6f8fa; border: 1px solid var(--line); border-radius: 6px;
+    padding: 6px 8px; font-size: 12px; word-break: break-all; min-height: 30px; margin-bottom: 10px; }
+  #fileSearch { margin-bottom: 6px; }
+  #fileList { max-height: 300px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }
+  #fileList .pk { font-size: 11px; color: var(--sub); background: #f6f8fa;
+    padding: 3px 8px; font-weight: 600; position: sticky; top: 0; }
+  #fileList .fl { padding: 4px 8px 4px 18px; font-size: 12px; cursor: pointer;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #fileList .fl:hover { background: #eef4ff; }
+  #fileList .fl.cur { background: #e8f0fe; color: var(--accent-2); font-weight: 600; }
+  #fileList .none { padding: 16px; text-align: center; color: var(--sub); font-size: 12px; }
+  .swatches { display: flex; gap: 6px; margin: 4px 0 10px; }
+  .sw { width: 26px; height: 26px; border-radius: 6px; border: 2px solid transparent; cursor: pointer; }
+  .sw.sel { border-color: #1f2329; }
+  .sw.c-green  { background: var(--green); }
+  .sw.c-amber  { background: var(--amber); }
+  .sw.c-yellow { background: var(--yellow); }
+  .sw.c-red    { background: var(--red); }
+  .sw.c-off    { background: #5f6368; }
+  .editor-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .editor-btns button { font-size: 12px; padding: 6px 4px; }
+  .editor-btns .wide { grid-column: 1 / -1; }
+
+  /* ---------- 日志 ---------- */
+  #logCard { margin: 0 18px 14px; }
+  #logCard summary { cursor: pointer; font-size: 13px; color: var(--sub); font-weight: 600;
+    outline: none; }
+  #logBox { margin-top: 8px; background: #1e1e1e; color: #d4d4d4; border-radius: 8px;
+    padding: 10px 12px; font: 12px/1.6 Consolas, "Cascadia Mono", monospace;
+    max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+
+  /* ---------- toast / modal ---------- */
+  #toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+    background: #1f2329; color: #fff; padding: 8px 16px; border-radius: 8px;
+    font-size: 13px; opacity: 0; transition: opacity .25s; pointer-events: none; z-index: 99;
+    max-width: 70vw; }
+  #toast.show { opacity: .95; }
+  #toast.err { background: var(--err); }
+  #mask { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: none;
+    align-items: center; justify-content: center; z-index: 100; }
+  #mask.show { display: flex; }
+  #dialog { background: #fff; border-radius: 12px; padding: 18px; width: 380px;
+    max-width: 92vw; box-shadow: 0 12px 40px rgba(0,0,0,.2); }
+  #dialog h4 { font-size: 15px; margin-bottom: 12px; }
+  #dialog .field { margin-bottom: 12px; }
+  #dialog .btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+  #hint { font-size: 12px; color: var(--warn); margin-top: 8px; display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="title">🎛 Launchpad 声音板控制台 <small>Mini MK1 · 本地网页配置</small></div>
+  <div class="spacer"></div>
+  <span id="runState" class="on">● 运行中</span>
+  <button id="btnLed" title="关闭 Launchpad 上所有 LED（进程被强杀后灯会常亮）">💡 熄灯</button>
+  <button id="btnReload" class="primary" title="重新读取 config.yaml 和 pages/，不用重启程序">↻ 重新加载配置</button>
+  <button id="btnQuit" class="danger">■ 退出</button>
+</header>
+
+<main>
+  <!-- 左栏 -->
+  <div class="col">
+    <div class="card">
+      <h3>播放设备</h3>
+      <div class="field">
+        <label><input type="checkbox" id="chkLocal" style="width:auto;vertical-align:-1px"> 本地监听（自己也能听到）— 关掉就只送 VoiceMeeter</label>
+      </div>
+      <div class="field">
+        <label>本地监听设备（本地监听开启时用）</label>
+        <select id="selOutput"></select>
+      </div>
+      <div class="field">
+        <label>虚拟设备（送 VoiceMeeter / 游戏语音）</label>
+        <select id="selVirtual"></select>
+      </div>
+      <div class="field">
+        <label>虚拟设备音量（0 ~ 1，默认 0.10）</label>
+        <input type="text" id="inpVolume" placeholder="1.0">
+      </div>
+      <div class="field">
+        <label>MIDI 输入（Launchpad）</label>
+        <select id="selMidiIn"></select>
+      </div>
+      <div class="field">
+        <label>MIDI 输出（Launchpad LED）</label>
+        <select id="selMidiOut"></select>
+      </div>
+      <div class="field">
+        <label>按住模式（CC 111 循环切换）</label>
+        <select id="selHold">
+          <option value="Normal">Normal · 按一下播完整段</option>
+          <option value="Stop">Stop · 按住播放 / 松手停止</option>
+          <option value="Pause">Pause · 再按一次暂停/继续</option>
+        </select>
+      </div>
+      <button id="btnSaveCfg" class="primary" style="width:100%">保存设备设置</button>
+      <div id="hint">⚠ 改完点右上角「↻ 重新加载配置」生效，不用重启程序</div>
+    </div>
+
+    <div class="card">
+      <h3>页面 <span class="muted" id="pageCount"></span></h3>
+      <div id="pageList"><div class="empty">加载中…</div></div>
+      <div class="btn-row">
+        <button id="btnNewPage">＋ 新建</button>
+        <button id="btnFillPage">📁 文件夹生成</button>
+        <button id="btnRenamePage">✎ 改名</button>
+        <button id="btnDelPage" class="danger">🗑 删除</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>语言包（sounds/） <span class="muted" id="packHint"></span></h3>
+      <div id="packList"></div>
+      <div class="btn-row">
+        <button id="btnOpenSounds">📂 打开 sounds 文件夹</button>
+      </div>
+      <div class="muted" style="margin-top:8px">上传音频到：<b id="uploadTarget">—</b></div>
+    </div>
+  </div>
+
+  <!-- 中栏 -->
+  <div class="col">
+    <div class="card" id="gridWrap">
+      <div id="pageTitle"><b>—</b><span class="muted" id="pageSub"></span></div>
+      <div class="muted" style="margin:2px 0 6px">顶排圆键 CC 104–111 为固定功能（首页/上页/下页/末页/退出/停止/模式），不在自定义范围：</div>
+      <div id="ccRow"></div>
+      <div id="grid"></div>
+      <div class="muted" style="margin-top:8px">单击按键 = 编辑 · 双击 = 试听 · 把音频文件拖到按键上 = 直接上传并绑定</div>
+    </div>
+
+    <div class="card" id="watchCard">
+      <h3>按键测试（MIDI 监视）
+        <span>
+          <button id="btnWatch">● 开始监视</button>
+        </span>
+      </h3>
+      <div class="row" style="align-items:center;gap:10px">
+        <div class="big" id="watchLast" style="flex:1">还没收到按键</div>
+        <div class="muted" id="watchInfo" style="text-align:right;white-space:nowrap"></div>
+      </div>
+      <div id="evList"><div class="muted">点「开始监视」，然后按 Launchpad 上的实体键</div></div>
+      <div class="muted" style="margin-top:6px">
+        按了键这里没事件 → 信号没到电脑（USB/驱动/端口）；有事件但没声音 → 声音板程序或音频设备的问题。
+        监视器和声音板会同时占用 Launchpad 输入端口，怀疑互相干扰时可先「停止监视」再试。
+      </div>
+    </div>
+  </div>
+
+  <!-- 右栏 -->
+  <div class="col">
+    <div class="card" id="editor">
+      <h3>按键编辑器</h3>
+      <div id="editorBody">
+        <div class="muted" style="padding:18px 0;text-align:center">先在中间网格点一个按键</div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<details class="card" id="logCard" open>
+  <summary>活动日志 <span id="srvInfo" class="muted" style="font-weight:400;font-size:12px"></span></summary>
+  <div id="logBox">（暂无活动）</div>
+</details>
+
+<div id="toast"></div>
+<div id="mask"><div id="dialog"></div></div>
+
+<input type="file" id="fileInput" accept="audio/*,.wav,.mp3,.ogg,.flac,.aiff,.m4a" style="display:none">
+
+<script>
+"use strict";
+const S = {
+  config: {}, pages: [], packs: [], devices: [], midi: {in: [], out: []},
+  audioLibs: true, running: false, logLines: [],
+  curPage: null, curNote: null, curPack: null, search: "",
+  watch: {on: false, since: 0, events: [], total: 0, device: null},
+};
+
+const $ = (id) => document.getElementById(id);
+const NOTES = Array.from({length: 64}, (_, i) => 16 * Math.floor(i / 8) + (i % 8));
+const COLOR_VEL = {green: 60, amber: 63, yellow: 62, red: 15, off: 12};
+const COLOR_NAME = {60: "green", 63: "amber", 62: "yellow", 15: "red", 12: "off"};
+
+/* ---------------- 基础 ---------------- */
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const j = await r.json().catch(() => ({ok: false, error: "bad response"}));
+  if (!j.ok && j.error) toast(j.error, true);
+  return j;
+}
+let toastTimer = null;
+function toast(msg, isErr) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.className = "show" + (isErr ? " err" : "");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.className = "", 2600);
+}
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g,
+    c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+}
+function basename(p) { return String(p || "").split(/[\\/]/).pop(); }
+
+/* ---------------- 启动加载 ---------------- */
+async function boot() {
+  const j = await api("/api/bootstrap");
+  if (!j.ok) return;
+  Object.assign(S, {
+    config: j.config || {}, pages: j.pages || [], packs: j.packs || [],
+    devices: j.devices || [], midi: j.midi || {in: [], out: []},
+    audioLibs: !!j.audio_libs, running: !!j.running, server: j.server || {},
+  });
+  S.serverPid = (j.server || {}).pid || null;
+  S.configSnapshot = Object.assign({}, j.config || {});   // 保存时用来判断哪些字段被改过
+  if (S.server.root) $("srvInfo").textContent =
+    "服务 PID " + S.server.pid + " · 端口 " + S.server.port + " · " + S.server.root;
+  if (!S.audioLibs) {
+    toast("未安装 sounddevice/soundfile/numpy：设备下拉与试听不可用（编辑功能正常）", true);
+  }
+  if (!j.exe_exists) toast("未找到 launch-soundpad.exe，请先运行 build.bat", true);
+  S.curPack = (S.packs[0] || {}).name || null;
+  if (S.pages.length) S.curPage = S.pages[0].name;
+  renderDevices();
+  renderPages();
+  renderPacks();
+  renderGrid();
+  renderEditor();
+  renderRunState();
+  renderWatch();
+  pollStatus();
+  pollWatch();
+}
+
+/* ---------------- 设备 ---------------- */
+function renderDevices() {
+  const out = $("selOutput"), vir = $("selVirtual");
+  out.innerHTML = ""; vir.innerHTML = "";
+  const add = (sel, name, label) => {
+    const o = document.createElement("option");
+    o.value = name; o.textContent = label;
+    sel.appendChild(o);
+  };
+  add(out, "", "（系统默认设备）");
+  for (const d of S.devices) {
+    add(out, d.name, d.name + (d.is_default ? " · 当前默认" : ""));
+    add(vir, d.name, d.name);
+  }
+  if (!S.devices.length) {
+    add(out, "", "（未检测到设备）");
+    add(vir, "", "（未检测到设备）");
+  }
+  out.value = S.config.output_device || "";
+  vir.value = S.config.virtual_device || (S.devices[0] || {}).name || "";
+  const mi = $("selMidiIn"), mo = $("selMidiOut");
+  mi.innerHTML = ""; mo.innerHTML = "";
+  (S.midi.in.length ? S.midi.in : ["(未检测到)"]).forEach(n => add(mi, n, n));
+  (S.midi.out.length ? S.midi.out : ["(未检测到)"]).forEach(n => add(mo, n, n));
+  mi.value = S.config.midi_in_device || (S.midi.in[0] || "");
+  mo.value = S.config.midi_out_device || (S.midi.out[0] || "");
+  $("selHold").value = S.config.hold_to || "Normal";
+  const lm = (S.config.local_monitor || "").trim().toLowerCase();
+  $("chkLocal").checked = !["false", "0", "no", "off", "none", "disabled"].includes(lm);
+  $("selOutput").disabled = !$("chkLocal").checked;
+  $("inpVolume").value = S.config.virtual_volume || "0.10";
+}
+
+async function saveConfig() {
+  // 只提交用户真正改过的字段：防止「打开很久的旧页面」用它加载时的旧值
+  // 把别处刚改好的配置覆盖回去（本地监听/音量被莫名重置就是这么来的）。
+  const snap = S.configSnapshot || {};
+  const normLocal = (v) => ["false", "0", "no", "off", "none", "disabled", ""]
+    .includes(String(v == null ? "" : v).trim().toLowerCase()) ? "false" : "true";
+  const now = {
+    output_device: $("selOutput").value,
+    virtual_device: $("selVirtual").value,
+    midi_in_device: $("selMidiIn").value,
+    midi_out_device: $("selMidiOut").value,
+    hold_to: $("selHold").value,
+    local_monitor: $("chkLocal").checked ? "true" : "false",
+    virtual_volume: ($("inpVolume").value || "").trim(),
+  };
+  const defaults = {hold_to: "Normal", local_monitor: "true", virtual_volume: ""};
+  const body = {};
+  for (const k of Object.keys(now)) {
+    const shown = snap[k] == null ? (defaults[k] || "") : String(snap[k]).trim();
+    const shownNorm = k === "local_monitor" ? normLocal(shown)
+      : k === "virtual_volume" ? (shown || "") : shown;
+    const nowNorm = k === "local_monitor" ? normLocal(now[k]) : now[k];
+    if (nowNorm !== shownNorm) body[k] = now[k];
+  }
+  if (!Object.keys(body).length) { toast("没有改动，无需保存"); return; }
+  const j = await api("/api/config", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body),
+  });
+  if (j.ok) {
+    S.config = j.config;
+    S.configSnapshot = Object.assign({}, j.config);
+    toast("已保存：" + Object.keys(body).join("、") + "（点右上角「↻ 重新加载配置」生效）");
+  }
+}
+
+/* ---------------- 页面 ---------------- */
+function renderPages() {
+  const box = $("pageList");
+  $("pageCount").textContent = S.pages.length ? S.pages.length + " 个" : "";
+  if (!S.pages.length) {
+    box.innerHTML = '<div class="empty">还没有页面<br>点「新建」或「文件夹生成」</div>';
+    return;
+  }
+  box.innerHTML = "";
+  for (const p of S.pages) {
+    const div = document.createElement("div");
+    div.className = "item" + (p.name === S.curPage ? " sel" : "");
+    div.innerHTML = "<span>" + esc(p.label) + "</span><span class='cnt'>" + p.count + " 键</span>";
+    div.onclick = () => { S.curPage = p.name; S.curNote = null; renderPages(); renderGrid(); renderEditor(); };
+    box.appendChild(div);
+  }
+}
+
+async function newPage() {
+  const label = await prompt2("新建页面", "页面名称（会按顺序加编号前缀）", "新页面");
+  if (!label) return;
+  const j = await api("/api/pages/create", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({label}),
+  });
+  if (j.ok) { S.pages = j.pages; S.curPage = j.name; S.curNote = null; renderPages(); renderGrid(); renderEditor(); toast("已创建 " + j.name); }
+}
+
+async function fillPage() {
+  if (!S.packs.length) return toast("sounds/ 下没有语言包", true);
+  const opts = S.packs.map(p => '<option value="' + esc(p.name) + '">' + esc(p.name) + "（" + p.files.length + " 个）</option>").join("");
+  const html = "<h4>从文件夹生成整页</h4>" +
+    "<div class='field'><label>选择语言包（音频按文件名顺序填入 64 个按键）</label><select id='dPack'>" + opts + "</select></div>" +
+    "<div class='field'><label>页面名称</label><input type='text' id='dLabel' value='" + esc(S.curPack || "") + "'></div>" +
+    "<div class='btns'><button onclick='closeModal()'>取消</button>" +
+    "<button class='primary' onclick='doFillPage()'>生成</button></div>";
+  openModal(html);
+}
+async function doFillPage() {
+  const pack = $("dPack").value, label = $("dLabel").value.trim() || pack;
+  closeModal();
+  const j = await api("/api/pages/fill", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({pack, label}),
+  });
+  if (j.ok) {
+    S.pages = j.pages; S.curPage = j.name; S.curNote = null;
+    renderPages(); renderGrid(); renderEditor();
+    toast("已生成 " + j.name + "（" + j.filled + " 个按键）");
+  }
+}
+
+async function renamePage() {
+  if (!S.curPage) return;
+  const p = S.pages.find(x => x.name === S.curPage);
+  const name = await prompt2("重命名页面", "新名称", p ? p.label : "");
+  if (!name) return;
+  const j = await api("/api/pages/rename", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({old: S.curPage, new: name}),
+  });
+  if (j.ok) { S.pages = j.pages; S.curPage = j.name; renderPages(); renderGrid(); toast("已改名"); }
+}
+
+async function deletePage() {
+  if (!S.curPage) return;
+  if (!confirm("确定删除页面「" + S.curPage + "」？音频文件不会删。")) return;
+  const j = await api("/api/pages/delete", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({name: S.curPage}),
+  });
+  if (j.ok) {
+    S.pages = j.pages;
+    S.curPage = S.pages.length ? S.pages[0].name : null;
+    S.curNote = null;
+    renderPages(); renderGrid(); renderEditor(); toast("已删除");
+  }
+}
+
+/* ---------------- 网格 ---------------- */
+function curPageObj() { return S.pages.find(p => p.name === S.curPage) || null; }
+
+function renderGrid() {
+  const grid = $("grid");
+  grid.innerHTML = "";
+  const page = curPageObj();
+  $("pageTitle").innerHTML = page
+    ? "<b>" + esc(page.label) + "</b><span class='muted'>" + esc(page.name) + " · " + page.count + "/64 键已绑定</span>"
+    : "<b>没有页面</b><span class='muted'>请先新建或生成页面</span>";
+  // 顶排 CC 说明
+  const cc = $("ccRow");
+  cc.innerHTML = "";
+  ["104 首页", "105 末页", "106 上页", "107 下页", "108 退出", "109 停止", "—", "111 模式"].forEach(t => {
+    const d = document.createElement("div");
+    d.className = "cc"; d.textContent = t;
+    cc.appendChild(d);
+  });
+  for (const note of NOTES) {
+    const spec = page && page.pads[String(note)];
+    const pad = document.createElement("div");
+    pad.className = "pad" + (spec ? " has c-" + (COLOR_NAME[spec.color] || "green") : " empty");
+    pad.dataset.note = note;
+    if (note === S.curNote) pad.classList.add("sel");
+    const row = Math.floor(note / 16) + 1, col = (note % 16) + 1;
+    pad.innerHTML = "<span class='n'>" + note + "</span>" +
+      "<span class='f'>" + (spec ? esc(basename(spec.path)) : "第" + row + "行" + col + "列 · 空") + "</span>";
+    pad.title = spec ? spec.path : ("note " + note + " · 第" + row + "行 第" + col + "列 · 未绑定");
+    pad.onclick = () => { S.curNote = note; renderGrid(); renderEditor(); };
+    pad.ondblclick = () => { if (spec) doPreview(spec.path); };
+    pad.ondragover = (e) => { e.preventDefault(); pad.classList.add("drop"); };
+    pad.ondragleave = () => pad.classList.remove("drop");
+    pad.ondrop = (e) => {
+      e.preventDefault(); pad.classList.remove("drop");
+      const f = e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) uploadTo(f, note);
+    };
+    grid.appendChild(pad);
+  }
+}
+
+/* ---------------- 编辑器 ---------------- */
+function renderEditor() {
+  const body = $("editorBody");
+  if (S.curNote == null) {
+    body.innerHTML = "<div class='muted' style='padding:18px 0;text-align:center'>先在中间网格点一个按键</div>";
+    return;
+  }
+  const page = curPageObj();
+  const spec = page && page.pads[String(S.curNote)];
+  const row = Math.floor(S.curNote / 16) + 1, col = (S.curNote % 16) + 1;
+  const color = spec ? (COLOR_NAME[spec.color] || "green") : "green";
+  // 文件列表（按语言包分组 + 搜索过滤）
+  let filesHtml = "";
+  const q = S.search.trim().toLowerCase();
+  for (const pk of S.packs) {
+    const files = pk.files.filter(f => !q || f.name.toLowerCase().includes(q) || pk.name.toLowerCase().includes(q));
+    if (!files.length) continue;
+    filesHtml += "<div class='pk'>📁 " + esc(pk.name) + "</div>";
+    for (const f of files) {
+      const cur = spec && spec.path === f.path ? " cur" : "";
+      filesHtml += "<div class='fl" + cur + "' data-path='" + esc(f.path) + "' title='" + esc(f.path) + "'>" + esc(f.name) + "</div>";
+    }
+  }
+  if (!filesHtml) filesHtml = "<div class='none'>没有匹配的音频<br>把文件放到 sounds/ 或用上方上传</div>";
+
+  body.innerHTML =
+    "<div class='note-head'><b>按键 " + S.curNote + "</b><span class='muted'>第 " + row + " 行 第 " + col + " 列</span></div>" +
+    "<div id='curFile'>" + (spec ? "🎵 " + esc(spec.path) : "（空）— 点下面的文件绑定") + "</div>" +
+    "<input type='text' id='fileSearch' placeholder='搜索文件名…' value='" + esc(S.search) + "'>" +
+    "<div id='fileList'>" + filesHtml + "</div>" +
+    "<div class='muted' style='margin:10px 0 3px'>空闲时 LED 颜色</div>" +
+    "<div class='swatches' id='swatches'>" +
+      ["green", "amber", "yellow", "red", "off"].map(c =>
+        "<div class='sw c-" + c + (c === color ? " sel" : "") + "' data-c='" + c + "' title='" + c + "'></div>").join("") +
+    "</div>" +
+    "<div class='editor-btns'>" +
+      "<button id='btnPreview'>▶ 试听</button>" +
+      "<button id='btnStopPv' class='danger'>■ 停止</button>" +
+      "<button id='btnUpload'>⬆ 上传音频</button>" +
+      "<button id='btnClear'" + (spec ? "" : " disabled") + ">✕ 清空此键</button>" +
+    "</div>";
+
+  $("fileSearch").oninput = (e) => { S.search = e.target.value; renderEditor(); };
+  document.querySelectorAll("#fileList .fl").forEach(el => {
+    el.onclick = () => assignFile(el.dataset.path);
+  });
+  document.querySelectorAll("#swatches .sw").forEach(el => {
+    el.onclick = () => setColor(el.dataset.c);
+  });
+  $("btnPreview").onclick = () => { if (spec) doPreview(spec.path); else toast("此按键还没绑音频", true); };
+  $("btnStopPv").onclick = stopPreview;
+  $("btnUpload").onclick = () => $("fileInput").click();
+  $("btnClear").onclick = clearPad;
+}
+
+async function savePage() {
+  if (!S.curPage) return null;
+  const page = curPageObj();
+  const j = await api("/api/pages/save", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({name: S.curPage, pads: page ? page.pads : {}}),
+  });
+  if (j.ok) {
+    S.pages = j.pages;
+    toast("已保存");
+  }
+  return j;
+}
+
+function assignFile(path) {
+  const page = curPageObj();
+  if (!page) return toast("先建个页面", true);
+  page.pads[String(S.curNote)] = {path: path, color: page.pads[String(S.curNote)] ? page.pads[String(S.curNote)].color : COLOR_VEL.green};
+  renderGrid(); renderEditor(); renderPages(); savePage();
+}
+function clearPad() {
+  const page = curPageObj();
+  if (!page) return;
+  delete page.pads[String(S.curNote)];
+  renderGrid(); renderEditor(); renderPages(); savePage();
+}
+function setColor(c) {
+  const page = curPageObj();
+  if (!page || !page.pads[String(S.curNote)]) return;
+  page.pads[String(S.curNote)].color = COLOR_VEL[c];
+  renderGrid(); renderEditor(); savePage();
+}
+
+/* ---------------- 上传 / 预览 ---------------- */
+function uploadTargetPack() {
+  const page = curPageObj();
+  const label = page ? page.label : "";
+  if (S.packs.some(p => p.name === label)) return label;
+  return S.curPack || (S.packs[0] || {}).name || "自定义";
+}
+async function uploadTo(file, note) {
+  const pack = uploadTargetPack();
+  const url = "/api/upload?pack=" + encodeURIComponent(pack) + "&name=" + encodeURIComponent(file.name);
+  try {
+    const r = await fetch(url, {method: "POST", body: file});
+    const j = await r.json();
+    if (!j.ok) { toast(j.error || "上传失败", true); return; }
+    toast("已上传 → " + pack + "/" + basename(j.path));
+    S.packs = j.packs;
+    renderPacks();
+    S.curNote = note;
+    const page = curPageObj();
+    if (page) {
+      page.pads[String(note)] = {path: j.path, color: page.pads[String(note)] ? page.pads[String(note)].color : COLOR_VEL.green};
+      renderGrid(); renderEditor(); renderPages(); savePage();
+    }
+  } catch (e) { toast("上传失败: " + e, true); }
+}
+
+async function doPreview(path) {
+  stopPreview(true);
+  const devName = $("selOutput").value;
+  const j = await api("/api/preview", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({path: path, device: devName}),
+  });
+  if (j.ok) {
+    toast("试听中（" + j.seconds + "s）");
+    flashPad(path);
+  }
+}
+function flashPad(path) {
+  const page = curPageObj();
+  if (!page) return;
+  for (const [n, spec] of Object.entries(page.pads)) {
+    if (spec.path === path) {
+      const el = document.querySelector('.pad[data-note="' + n + '"]');
+      if (el) { el.classList.add("playing"); setTimeout(() => el.classList.remove("playing"), Math.min(8000, 3000)); }
+    }
+  }
+}
+async function stopPreview(silent) {
+  await api("/api/preview/stop", {method: "POST"});
+  if (!silent) toast("已停止试听");
+}
+/* ---------------- 语言包 ---------------- */
+function renderPacks() {
+  const box = $("packList");
+  $("packHint").textContent = S.packs.length ? S.packs.length + " 个" : "";
+  $("uploadTarget").textContent = uploadTargetPack();
+  if (!S.packs.length) {
+    box.innerHTML = "<div class='muted' style='padding:8px'>sounds/ 还是空的</div>";
+    return;
+  }
+  box.innerHTML = "";
+  for (const p of S.packs) {
+    const d = document.createElement("div");
+    d.className = "item" + (p.name === S.curPack ? " sel" : "");
+    d.innerHTML = "<span>" + esc(p.name) + "</span><span class='cnt'>" + p.files.length + "</span>";
+    d.onclick = () => { S.curPack = p.name; renderPacks(); };
+    box.appendChild(d);
+  }
+}
+
+/* ---------------- MIDI 按键监视 ---------------- */
+async function toggleWatch() {
+  if (S.watch.on) {
+    await api("/api/midi/watch", {method: "POST", headers: {"Content-Type": "application/json"},
+                                  body: JSON.stringify({action: "stop"})});
+    S.watch.on = false;
+    renderWatch();
+    toast("已停止监视");
+    return;
+  }
+  const j = await api("/api/midi/watch", {method: "POST", headers: {"Content-Type": "application/json"},
+                                          body: JSON.stringify({action: "start"})});
+  if (!j.ok) { toast("监视启动失败: " + (j.error || ""), true); return; }
+  S.watch.on = true;
+  S.watch.since = 0;
+  S.watch.events = [];
+  S.watch.device = j.device;
+  renderWatch();
+  toast("监视中（" + j.device + "）—— 按 Launchpad 上的键试试");
+}
+function renderWatch() {
+  $("btnWatch").textContent = S.watch.on ? "■ 停止监视" : "● 开始监视";
+  $("btnWatch").className = S.watch.on ? "danger" : "";
+  $("watchInfo").innerHTML = S.watch.on
+    ? "监视中 · " + esc(S.watch.device || "") + "<br>已收 " + S.watch.total + " 个事件"
+    : (S.watch.device ? "已停止 · " + esc(S.watch.device) : "");
+  const box = $("evList");
+  if (!S.watch.events.length) {
+    box.innerHTML = "<div class='muted'>" + (S.watch.on ? "等待按键…" : "点「开始监视」，然后按 Launchpad 上的实体键") + "</div>";
+    return;
+  }
+  box.innerHTML = S.watch.events.slice(-40).reverse().map(e => {
+    const label = e.kind === "cc" ? "CC " + e.note
+      : "note " + e.note + " · 第" + (Math.floor(e.note / 16) + 1) + "行第" + (e.note % 16 + 1) + "列";
+    const kind = e.kind === "note_on" ? "按下" : e.kind === "note_off" ? "松开" : "旋钮";
+    return "<div class='ev " + e.kind + "'>" + e.t + "  " + kind + "  " + label + "  vel=" + e.velocity + "</div>";
+  }).join("");
+}
+async function pollWatch() {
+  if (S.watch.on) {
+    try {
+      const j = await api("/api/midi/events?since=" + S.watch.since);
+      if (j.ok) {
+        if (j.events && j.events.length) {
+          S.watch.events = S.watch.events.concat(j.events);
+          S.watch.since = j.last_seq;
+          const last = j.events[j.events.length - 1];
+          const on = j.events.filter(e => e.kind === "note_on").slice(-1)[0];
+          if (on) {
+            S.watch.total += j.events.filter(e => e.kind === "note_on").length;
+            $("watchLast").innerHTML = "note " + on.note +
+              "<small>第" + (Math.floor(on.note / 16) + 1) + "行第" + (on.note % 16 + 1) + "列 · vel " + on.velocity + "</small>";
+            hitPad(on.note);
+          }
+          renderWatch();
+        } else if (!S.watch.on) {
+          renderWatch();
+        }
+      }
+    } catch (e) { /* 服务重启中 */ }
+  }
+  setTimeout(pollWatch, 400);
+}
+function hitPad(note) {
+  const el = document.querySelector(".pad[data-note='" + note + "']");
+  if (!el) return;
+  el.classList.add("hit");
+  setTimeout(() => el.classList.remove("hit"), 600);
+}
+
+/* ---------------- 运行控制 ---------------- */
+function renderRunState() {
+  const st = $("runState");
+  if (st) {
+    st.textContent = S.running ? "● 运行中" : "未运行";
+    st.className = S.running ? "on" : "off";
+  }
+  $("hint").style.display = "block";
+}
+async function reloadAll() {
+  const j = await api("/api/reload", {method: "POST"});
+  if (j.ok) {
+    toast("已重新加载 config.yaml 与 pages/");
+    setTimeout(boot, 600);
+  }
+}
+async function quitApp() {
+  if (!confirm("退出声音板？Launchpad 会熄灭，程序关闭。")) return;
+  await api("/api/quit", {method: "POST"});
+  toast("已退出，可以关掉这个页面了");
+}
+async function clearLeds() {
+  const j = await api("/api/led/clear", {method: "POST"});
+  if (j.ok) toast("已关闭 " + j.count + " 个 LED（" + j.device + "）");
+}
+async function pollStatus() {
+  try {
+    const r = await fetch("/api/status");
+    const j = await r.json();
+    S.running = j.running !== false;
+    S.logLines = j.log || [];
+    // 检测服务实例是否被换掉（浏览器连的应该是同一个进程）
+    if (j.pid && S.serverPid && j.pid !== S.serverPid && !S.pidWarned) {
+      S.pidWarned = true;
+      toast("提示：后端进程已变化，刷新页面即可", true);
+    }
+    // 同步服务端的监视状态（页面刷新/换标签后不至于显示不一致）
+    if (j.watching !== undefined) {
+      if (j.watching && !S.watch.on) {
+        S.watch.on = true;
+        S.watch.device = j.watch_device;
+        S.watch.since = j.watch_seq || 0;
+        renderWatch();
+      } else if (!j.watching && S.watch.on) {
+        S.watch.on = false;
+        renderWatch();
+      }
+    }
+    renderRunState();
+    renderLog();
+  } catch (e) { /* 服务没起来 */ }
+  setTimeout(pollStatus, 1500);
+}
+// 活动日志：服务端只给文本行，这里给新出现的行补上本地时间（按最后一行做锚点，
+// 这样服务端环形缓冲裁掉老行也不会错位）
+function renderLog() {
+  const lines = S.logLines;
+  if (!S.logTagged) S.logTagged = [];
+  let start = 0;
+  if (S.logTagged.length) {
+    const anchor = S.logTagged[S.logTagged.length - 1].text;
+    const idx = lines.lastIndexOf(anchor);
+    start = idx >= 0 ? idx + 1 : 0;
+    if (start === 0) S.logTagged = [];
+  }
+  for (let i = start; i < lines.length; i++) {
+    S.logTagged.push({
+      t: new Date().toLocaleTimeString("zh-CN", {hour12: false}),
+      text: lines[i],
+    });
+  }
+  const box = $("logBox");
+  box.textContent = S.logTagged.length
+    ? S.logTagged.map(x => x.t + "  " + x.text).join("\n")
+    : "（暂无活动）";
+  if (box.scrollHeight - box.scrollTop - box.clientHeight < 80) box.scrollTop = box.scrollHeight;
+}
+
+/* ---------------- modal ---------------- */
+function openModal(html) { $("dialog").innerHTML = html; $("mask").classList.add("show"); }
+function closeModal() { $("mask").classList.remove("show"); }
+$("mask").onclick = (e) => { if (e.target === $("mask")) closeModal(); };
+function prompt2(title, label, def) {
+  return new Promise((res) => {
+    openModal("<h4>" + esc(title) + "</h4>" +
+      "<div class='field'><label>" + esc(label) + "</label><input type='text' id='dInput' value='" + esc(def || "") + "'></div>" +
+      "<div class='btns'><button onclick='closeModal();window.__pr(null)'>取消</button>" +
+      "<button class='primary' onclick='closeModal();window.__pr($(\"dInput\").value.trim())'>确定</button></div>");
+    window.__pr = (v) => { window.__pr = null; res(v); };
+    setTimeout(() => { const i = $("dInput"); if (i) { i.focus(); i.select(); } }, 50);
+  });
+}
+
+/* ---------------- 事件绑定 ---------------- */
+$("btnSaveCfg").onclick = saveConfig;
+$("btnNewPage").onclick = newPage;
+$("btnFillPage").onclick = fillPage;
+$("btnRenamePage").onclick = renamePage;
+$("btnDelPage").onclick = deletePage;
+$("btnOpenSounds").onclick = () => api("/api/open", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({path: "sounds"})});
+$("btnReload").onclick = reloadAll;
+$("btnQuit").onclick = quitApp;
+$("btnLed").onclick = clearLeds;
+$("chkLocal").onchange = () => { $("selOutput").disabled = !$("chkLocal").checked; };
+$("btnWatch").onclick = toggleWatch;
+$("fileInput").onchange = (e) => {
+  const f = e.target.files && e.target.files[0];
+  if (f && S.curNote != null) uploadTo(f, S.curNote);
+  e.target.value = "";
+};
+
+boot();
+</script>
+</body>
+</html>

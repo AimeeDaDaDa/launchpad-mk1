@@ -12,7 +12,17 @@ pub fn get_output_devices() -> Vec<String> {
 
 pub fn select_output_device(name: &str) -> Option<OutputStream> {
   let host = cpal::default_host();
-  let output_device = host.devices().unwrap().find(|device| device.name().unwrap().eq(name));
+  // An empty name means "system default"; otherwise match by substring so
+  // that names like "Voicemeeter In 3 (VB-Audio Voicemeeter VAIO)" resolve
+  // even when the trailing part differs between audio backends.
+  let output_device = if name.is_empty() {
+    host.default_output_device()
+  } else {
+    host.devices().unwrap().find(|device| {
+      let device_name = device.name().unwrap_or_default();
+      device_name == name || device_name.contains(name)
+    })
+  };
   if let Some(device) = output_device {
     OutputStreamBuilder::from_device(device).unwrap().open_stream().ok()
   } else {

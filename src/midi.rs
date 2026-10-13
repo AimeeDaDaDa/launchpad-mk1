@@ -30,7 +30,7 @@ pub fn select_midi_output_device(name: &str) -> Option<midir::MidiOutputConnecti
     let midi_out = midir::MidiOutput::new("launchpad-soundpad").unwrap();
     for port in midi_out.ports() {
         let port_name = midi_out.port_name(&port).unwrap();
-        if port_name.eq(name) {
+        if port_name == name || port_name.contains(name) {
             return midi_out.connect(&port, "launchpad-soundpad-output").ok();
         }
     }
@@ -42,7 +42,7 @@ pub fn listen_midi_input(name: &str, tx_on: Sender<NoteEvent>) -> Option<MidiInp
     let mut found_port: Option<MidiInputPort> = None;
     for port in midi_in.ports() {
         let port_name = midi_in.port_name(&port).unwrap();
-        if port_name.eq(name) {
+        if port_name == name || port_name.contains(name) {
             found_port = Some(port);
             break;
         }
@@ -60,33 +60,32 @@ pub fn listen_midi_input(name: &str, tx_on: Sender<NoteEvent>) -> Option<MidiInp
     None
 }
 
-pub fn refresh_grid(launchpad: &Launchpad, config: &Config, referential: &mut Referential, tx_midi: &Sender<MidiOutputEvent>, with_header: bool) {
+pub fn refresh_grid(launchpad: &Launchpad, config: &Config, referential: &mut Referential, tx_midi: &Sender<MidiOutputEvent>, _with_header: bool) {
     let thread_tx_midi = tx_midi.clone();
-    // Clear the grid and right side
-    clear_grid(&thread_tx_midi, if with_header { 99 } else { 89 });
+    // Only the 64 grid pads are wiped; the top row and right column are
+    // redrawn below on every call so they survive page switches.
+    clear_grid(launchpad, &thread_tx_midi);
 
     for note in referential.current_page().get_notes().iter() {
         thread_tx_midi.send(note.into()).unwrap();
     }
 
-    if with_header {
-        if referential.get_nb_pages() > 1 {
-            thread_tx_midi.send(Note::white(launchpad.first_page_note()).into()).unwrap();
-            thread_tx_midi.send(Note::white(launchpad.last_page_note()).into()).unwrap();
-            thread_tx_midi.send(Note::white(launchpad.prev_page_note()).into()).unwrap();
-            thread_tx_midi.send(Note::white(launchpad.next_page_note()).into()).unwrap();
+    if referential.get_nb_pages() > 1 {
+        thread_tx_midi.send(Note::white(launchpad.first_page_note()).into()).unwrap();
+        thread_tx_midi.send(Note::white(launchpad.last_page_note()).into()).unwrap();
+        thread_tx_midi.send(Note::white(launchpad.prev_page_note()).into()).unwrap();
+        thread_tx_midi.send(Note::white(launchpad.next_page_note()).into()).unwrap();
+    }
+    thread_tx_midi.send(Note::white(launchpad.end_session_note()).into()).unwrap();
+    match config.get_hold_to_mode() {
+        HoldMode::Normal => {
+            thread_tx_midi.send(Note::white(launchpad.swap_hold_mode_note()).into()).unwrap();
         }
-        thread_tx_midi.send(Note::white(launchpad.end_session_note()).into()).unwrap();
-        match config.get_hold_to_mode() {
-            HoldMode::Normal => {
-                thread_tx_midi.send(Note::white(launchpad.swap_hold_mode_note()).into()).unwrap();
-            }
-            HoldMode::Pause => {
-                thread_tx_midi.send(Note::yellow(launchpad.swap_hold_mode_note()).into()).unwrap();
-            }
-            HoldMode::Stop => {
-                thread_tx_midi.send(Note::red(launchpad.swap_hold_mode_note()).into()).unwrap();
-            }
+        HoldMode::Pause => {
+            thread_tx_midi.send(Note::yellow(launchpad.swap_hold_mode_note()).into()).unwrap();
+        }
+        HoldMode::Stop => {
+            thread_tx_midi.send(Note::red(launchpad.swap_hold_mode_note()).into()).unwrap();
         }
     }
 
@@ -104,8 +103,8 @@ pub fn refresh_grid(launchpad: &Launchpad, config: &Config, referential: &mut Re
     }
 }
 
-pub fn clear_grid(thread_tx_midi: &Sender<MidiOutputEvent>, max_note: u8) {
-    for note in 1..max_note {
+pub fn clear_grid(launchpad: &Launchpad, thread_tx_midi: &Sender<MidiOutputEvent>) {
+    for note in launchpad.grid_notes() {
         thread_tx_midi.send(Note::off(note).into()).unwrap();
     }
 }
@@ -116,17 +115,20 @@ pub mod actions {
     use std::thread;
     use std::time::Duration;
     use rodio::Sink;
+    use crate::launchpad::Launchpad;
     use crate::midi::clear_grid;
     use crate::MidiOutputEvent;
 
-    pub fn end_session(tx_midi: &Sender<MidiOutputEvent>) {
-        clear_grid(&tx_midi, 99);
+    pub fn end_session(launchpad: &Launchpad, tx_midi: &Sender<MidiOutputEvent>) {
+        clear_grid(launchpad, tx_midi);
         thread::sleep(Duration::from_millis(100));
     }
 
-    pub fn stop_note(sinks: &mut HashMap<u8, (Sink, Sink)>) {
+    pub fn stop_note(sinks: &mut HashMap<u8, (Option<Sink>, Sink)>) {
         for (audio_sink, virtual_sink) in sinks.values() {
-            audio_sink.stop();
+            if let Some(sink) = audio_sink {
+                sink.stop();
+            }
             virtual_sink.stop();
         }
         sinks.clear();

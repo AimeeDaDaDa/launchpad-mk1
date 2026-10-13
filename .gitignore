@@ -1,4 +1,9 @@
 /target
 .idea
 *.iml
+# 页面文件是用户数据，不入库；但演示页保留，方便新克隆下来就能试
 pages/*
+!pages/00_demo
+# 运行期产生的调试日志
+config_write.log
+smoke.log
