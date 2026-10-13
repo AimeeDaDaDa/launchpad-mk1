@@ -66,7 +66,12 @@ def main():
     for i, (name, files) in enumerate(packs):
         lines = []
         for j, path in enumerate(files[:64]):
-            lines.append("%d;%s;%d" % (notes[j], os.path.abspath(path), COLOR_GREEN_FULL))
+            # 存相对路径（相对项目根），整个文件夹搬走绑定依然有效
+            try:
+                rel = os.path.relpath(path, HERE).replace("\\", "/")
+            except ValueError:
+                rel = os.path.abspath(path)
+            lines.append("%d;%s;%d" % (notes[j], rel, COLOR_GREEN_FULL))
         out = os.path.join(PAGES, "%02d_%s" % (i + 1, name))
         with open(out, "w", encoding="utf-8") as fh:
             fh.write("\n".join(lines) + "\n")

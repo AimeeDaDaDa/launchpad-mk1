@@ -126,6 +126,15 @@
   #evList .ev.note_off { color: var(--sub); }
   #evList .ev.cc { color: #7b1fa2; }
 
+  /* ---------- LED 颜色测试 ---------- */
+  #ledMap { max-height: 300px; overflow: auto; }
+  #ledCard table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  #ledCard th, #ledCard td { border: 1px solid var(--line); padding: 3px 6px; text-align: left; }
+  #ledCard th { background: #f6f8fa; color: var(--sub); font-weight: 600;
+    position: sticky; top: 0; }
+  #ledCard .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+    margin-right: 5px; vertical-align: -1px; border: 1px solid rgba(0,0,0,.15); }
+
   /* ---------- 编辑器 ---------- */
   #editor .note-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
   #editor .note-head b { font-size: 15px; }
@@ -276,6 +285,21 @@
         监视器和声音板会同时占用 Launchpad 输入端口，怀疑互相干扰时可先「停止监视」再试。
       </div>
     </div>
+
+    <div class="card" id="ledCard">
+      <h3>LED 颜色测试
+        <span>
+          <button id="btnLedNamed">① 8 种颜色</button>
+          <button id="btnLedGrid">② 4×4 绿红</button>
+          <button id="btnLedSweep">③ 全色阶</button>
+          <button id="btnLedOff">熄灭</button>
+        </span>
+      </h3>
+      <div class="muted" style="margin-bottom:8px">
+        MK1：velocity = 16×绿 + 红 + 12。点亮后对照下面的表格看实物颜色，把对不上的告诉我。
+      </div>
+      <div id="ledMap" class="muted">点上面的按钮点亮 Launchpad，这里会列出「位置 → velocity → 预期颜色」。</div>
+    </div>
   </div>
 
   <!-- 右栏 -->
@@ -310,8 +334,8 @@ const S = {
 
 const $ = (id) => document.getElementById(id);
 const NOTES = Array.from({length: 64}, (_, i) => 16 * Math.floor(i / 8) + (i % 8));
-const COLOR_VEL = {green: 60, amber: 63, yellow: 62, red: 15, off: 12};
-const COLOR_NAME = {60: "green", 63: "amber", 62: "yellow", 15: "red", 12: "off"};
+const COLOR_VEL = {green: 60, amber: 63, yellow: 61, red: 15, off: 12};
+const COLOR_NAME = {60: "green", 63: "amber", 62: "amber", 61: "yellow", 15: "red", 12: "off"};
 
 /* ---------------- 基础 ---------------- */
 async function api(path, opts) {
@@ -343,6 +367,8 @@ async function boot() {
     devices: j.devices || [], midi: j.midi || {in: [], out: []},
     audioLibs: !!j.audio_libs, running: !!j.running, server: j.server || {},
   });
+  // LED 颜色测试只有 exe 内嵌版有（Python 版没有实现），没有就隐藏那张卡片
+  if (j.led_test === false) { const c = $("ledCard"); if (c) c.style.display = "none"; }
   S.serverPid = (j.server || {}).pid || null;
   S.configSnapshot = Object.assign({}, j.config || {});   // 保存时用来判断哪些字段被改过
   if (S.server.root) $("srvInfo").textContent =
@@ -586,7 +612,8 @@ function renderEditor() {
     "<div class='muted' style='margin:10px 0 3px'>空闲时 LED 颜色</div>" +
     "<div class='swatches' id='swatches'>" +
       ["green", "amber", "yellow", "red", "off"].map(c =>
-        "<div class='sw c-" + c + (c === color ? " sel" : "") + "' data-c='" + c + "' title='" + c + "'></div>").join("") +
+        "<div class='sw c-" + c + (c === color ? " sel" : "") + "' data-c='" + c + "' title='" +
+        ({green: "绿 60", amber: "橙 63", yellow: "黄 61", red: "红 15", off: "灭 12"}[c]) + "'></div>").join("") +
     "</div>" +
     "<div class='editor-btns'>" +
       "<button id='btnPreview'>▶ 试听</button>" +
@@ -782,6 +809,24 @@ function hitPad(note) {
   setTimeout(() => el.classList.remove("hit"), 600);
 }
 
+/* ---------------- LED 颜色测试 ---------------- */
+async function ledTest(mode) {
+  const j = await api("/api/led/test", {method: "POST", headers: {"Content-Type": "application/json"},
+                                        body: JSON.stringify({action: mode})});
+  if (!j.ok) { toast("测试失败: " + (j.error || ""), true); return; }
+  const rows = j.items.map(it => {
+    const g = Math.floor((it.velocity - 12) / 16);
+    const r = (it.velocity - 12) % 16;
+    const col = "rgb(" + Math.min(255, r * 85) + "," + Math.min(255, g * 85) + ",0)";
+    return "<tr><td>" + esc(it.where) + "</td><td>" + it.velocity + "</td><td>" + g + "</td><td>" + r +
+      "</td><td><span class='swatch' style='background:" + col + "'></span>" + esc(it.label || "") + "</td></tr>";
+  }).join("");
+  $("ledMap").innerHTML =
+    "<div style='margin-bottom:6px'><b>" + esc(j.label) + "</b>（" + j.count + " 个键 · " + esc(j.device) + "）</div>" +
+    "<table><tr><th>位置</th><th>velocity</th><th>绿</th><th>红</th><th>预期颜色</th></tr>" + rows + "</table>";
+  toast("已点亮：" + j.label);
+}
+
 /* ---------------- 运行控制 ---------------- */
 function renderRunState() {
   const st = $("runState");
@@ -885,6 +930,10 @@ $("btnOpenSounds").onclick = () => api("/api/open", {method: "POST", headers: {"
 $("btnReload").onclick = reloadAll;
 $("btnQuit").onclick = quitApp;
 $("btnLed").onclick = clearLeds;
+$("btnLedNamed").onclick = () => ledTest("named");
+$("btnLedGrid").onclick = () => ledTest("grid");
+$("btnLedSweep").onclick = () => ledTest("sweep");
+$("btnLedOff").onclick = clearLeds;
 $("chkLocal").onchange = () => { $("selOutput").disabled = !$("chkLocal").checked; };
 $("btnWatch").onclick = toggleWatch;
 $("fileInput").onchange = (e) => {

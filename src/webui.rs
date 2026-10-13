@@ -439,7 +439,9 @@ fn save_page(name: &str, pads: &Value) -> Result<String, String> {
                 continue;
             }
             let color = spec.get("color").map(color_of).unwrap_or(60);
-            lines.push(format!("{};{};{}", note, p, color));
+            // 存相对路径，方便整个文件夹搬走
+            let stored = portable_path(p.trim()).to_string_lossy().replace('\\', "/");
+            lines.push(format!("{};{};{}", note, stored, color));
         }
     }
     std::fs::create_dir_all("pages").map_err(|e| e.to_string())?;
@@ -533,25 +535,13 @@ pub fn clear_leds_now() {
 
 /// 给 Launchpad 发一遍「灭灯」（进程被强杀后灯会常亮）
 fn clear_leds(hint: &str) -> Result<(String, usize), String> {
-    let midi_out = midir::MidiOutput::new("launch-soundpad-webui").map_err(|e| e.to_string())?;
     let notes = mk1_led_notes();
-    for port in midi_out.ports() {
-        let name = midi_out.port_name(&port).unwrap_or_default();
-        let hit = if hint.is_empty() {
-            name.to_lowercase().contains("launchpad")
-        } else {
-            name == hint || name.contains(hint)
-        };
-        if hit {
-            let mut conn = midi_out.connect(&port, "led-clear").map_err(|e| e.to_string())?;
-            for n in &notes {
-                let _ = conn.send(&[0x90, *n, 12]);
-            }
-            thread::sleep(std::time::Duration::from_millis(30));
-            return Ok((name, notes.len()));
+    let dev = with_led_conn(hint, |conn| {
+        for n in &notes {
+            let _ = conn.send(&[0x90, *n, 12]);
         }
-    }
-    Err(format!("找不到 MIDI 输出端口（{}）", if hint.is_empty() { "launchpad" } else { hint }))
+    })?;
+    Ok((dev, notes.len()))
 }
 
 // ------------------------------------------------------------------ 试听
@@ -564,9 +554,12 @@ fn preview_play(shared: &Arc<Shared>, path: &str, device: &str) -> Value {
     if path.trim().is_empty() {
         return json!({"ok": false, "error": "没有指定音频文件"});
     }
-    if !Path::new(path).is_file() {
+    let full = resolve_path(path.trim());
+    if !full.is_file() {
         return json!({"ok": false, "error": format!("文件不存在: {}", path)});
     }
+    let path = full.to_string_lossy().to_string();
+    let path = path.as_str();
     let Some(stream) = audio::select_output_device(device) else {
         return json!({"ok": false, "error": format!("打不开输出设备: {}", if device.is_empty() { "(系统默认)" } else { device })});
     };
@@ -590,6 +583,140 @@ fn preview_stop(shared: &Arc<Shared>) {
     }
 }
 
+/// 数据目录内的绝对路径 -> 相对路径。
+/// 页面文件里存相对路径，整个文件夹拷到别处/换台机器后绑定依然有效。
+pub fn portable_path(p: &str) -> PathBuf {
+    let path = Path::new(p);
+    if !path.is_absolute() {
+        return path.to_path_buf();
+    }
+    if let Ok(root) = std::env::current_dir() {
+        if let Ok(rel) = path.strip_prefix(&root) {
+            return rel.to_path_buf();
+        }
+    }
+    path.to_path_buf()
+}
+
+/// 相对路径按数据目录补全成绝对路径（试听用）
+fn resolve_path(p: &str) -> PathBuf {
+    let path = Path::new(p);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().map(|d| d.join(path)).unwrap_or_else(|_| path.to_path_buf())
+    }
+}
+
+/// MK1 网格 note（16*行+列，行优先）
+fn grid_notes() -> Vec<u8> {
+    (0..8u8).flat_map(|r| (0..8u8).map(move |c| 16 * r + c)).collect()
+}
+
+/// 打开 Launchpad 的 MIDI 输出口，把消息发出去（灭灯 / 颜色测试共用）
+fn with_led_conn<F>(hint: &str, mut f: F) -> Result<String, String>
+where
+    F: FnMut(&mut midir::MidiOutputConnection),
+{
+    let midi_out = midir::MidiOutput::new("launch-soundpad-led").map_err(|e| e.to_string())?;
+    for port in midi_out.ports() {
+        let name = midi_out.port_name(&port).unwrap_or_default();
+        let hit = if hint.is_empty() {
+            name.to_lowercase().contains("launchpad")
+        } else {
+            name == hint || name.contains(hint)
+        };
+        if hit {
+            let mut conn = midi_out.connect(&port, "led").map_err(|e| e.to_string())?;
+            // 先把整块灭掉，这样测试布局不会被当前页的灯干扰
+            for n in mk1_led_notes() {
+                let _ = conn.send(&[0x90, n, 12]);
+            }
+            f(&mut conn);
+            thread::sleep(std::time::Duration::from_millis(60));
+            return Ok(name);
+        }
+    }
+    Err(format!("找不到 MIDI 输出端口（{}）", if hint.is_empty() { "launchpad" } else { hint }))
+}
+
+/// MK1 三色 LED：velocity = 16*绿 + 红 + 12（普通模式 flags=12）
+fn led_velocity(green: u8, red: u8) -> u8 {
+    16 * green + red + 12
+}
+
+/// 8 种常用颜色（顺序 = 网格第 1 行从左到右）。
+/// 命名按实物实测校正过：61 最黄（G/R≈0.77）、62 偏橙、63 是纯橙。
+fn named_leds() -> [(&'static str, u8); 8] {
+    [
+        ("灭", 12),
+        ("红 暗", 13),
+        ("红 亮", 15),
+        ("绿 暗", 28),
+        ("绿 亮", 60),
+        ("橙 暗", 29),
+        ("橙 亮", 63),
+        ("黄（最黄）", 61),
+    ]
+}
+
+/// LED 颜色测试：把一组 velocity 按固定位置点亮，页面同时列出对照表让用户核对
+fn led_test(action: &str) -> Value {
+    let hint = config_get("midi_out_device").unwrap_or_default();
+    let mut items: Vec<Value> = Vec::new();
+
+    let result = match action {
+        "named" => with_led_conn(&hint, |conn| {
+            for (i, (label, vel)) in named_leds().iter().enumerate() {
+                let note = i as u8; // 第 1 行 note 0..7
+                let _ = conn.send(&[0x90, note, *vel]);
+                items.push(json!({"note": note, "velocity": vel, "label": label,
+                                  "where": format!("第1行 第{}列", i + 1)}));
+            }
+        }),
+        "sweep" => with_led_conn(&hint, |conn| {
+            let notes = grid_notes();
+            for (i, vel) in (12u8..64).enumerate() {
+                let note = notes[i];
+                let _ = conn.send(&[0x90, note, vel]);
+                // velocity 反推：绿 = (v-12)/16，红 = (v-12)%16
+                let g = (vel - 12) / 16;
+                let r = (vel - 12) % 16;
+                items.push(json!({"note": note, "velocity": vel,
+                                  "label": format!("绿{} 红{}", g, r),
+                                  "where": format!("第{}行 第{}列", note / 16 + 1, note % 16 + 1)}));
+            }
+        }),
+        "grid" => with_led_conn(&hint, |conn| {
+            // 绿阶：绿=0..3、红=0..3 的 4x4 组合铺在左上角 4x4
+            for r in 0..4u8 {
+                for g in 0..4u8 {
+                    let note = 16 * r + g;
+                    let vel = led_velocity(g, r);
+                    let _ = conn.send(&[0x90, note, vel]);
+                    items.push(json!({"note": note, "velocity": vel,
+                                      "label": format!("绿{} 红{}", g, r),
+                                      "where": format!("第{}行 第{}列", r + 1, g + 1)}));
+                }
+            }
+        }),
+        _ => return json!({"ok": false, "error": "未知的测试模式"}),
+    };
+
+    match result {
+        Ok(dev) => {
+            let label = match action {
+                "named" => "8 种常用颜色（第 1 行，从左到右）",
+                "sweep" => "全色阶 velocity 12-63",
+                _ => "4x4 绿/红组合（左上角）",
+            };
+            json!({"ok": true, "device": dev, "mode": action, "count": items.len(),
+                   "label": label, "items": items})
+        }
+        Err(e) => json!({"ok": false, "error": e}),
+    }
+}
+
 // ------------------------------------------------------------------ 路由
 
 fn handle(mut request: Request, shared: &Arc<Shared>) {
@@ -609,6 +736,7 @@ fn handle(mut request: Request, shared: &Arc<Shared>) {
                     "ok": true,
                     "embedded": true,
                     "audio_libs": true,
+                    "led_test": true,
                     "exe_exists": true,
                     "config": config_json(),
                     "devices": audio_devices_json(),
@@ -869,6 +997,16 @@ fn handle(mut request: Request, shared: &Arc<Shared>) {
                     }
                     Err(e) => json_response(json!({"ok": false, "error": e})),
                 });
+                return;
+            }
+            "/api/led/test" => {
+                let action = body.get("action").map(value_to_string).unwrap_or_else(|| "named".into());
+                let r = led_test(&action);
+                if r.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    let label = r.get("label").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    shared.push_activity(format!("LED 颜色测试: {}", label));
+                }
+                let _ = request.respond(json_response(r));
                 return;
             }
             "/api/midi/watch" => {

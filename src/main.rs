@@ -23,6 +23,7 @@ mod audio;
 mod midi;
 mod launchpad;
 mod webui;
+mod setup;
 #[cfg(windows)]
 mod tray;
 
@@ -146,16 +147,33 @@ fn main() -> Result<(), Box<dyn Error>> {
     return Ok(());
   }
 
-  // 先定位数据目录（config.yaml / pages / sounds 都在那儿）
+  // 先定位数据目录（config.yaml / pages / sounds 都在那儿）。
+  // 哪儿都找不到 config.yaml 时，就当作「全新安装」：在 exe 旁边建一份新的。
   match find_data_root() {
     Some(root) => {
       let _ = std::env::set_current_dir(&root);
       info!("working directory: {}", root.display());
     }
     None => {
-      fatal("找不到 config.yaml。\n\n请把 launch-soundpad.exe 放在有 config.yaml、pages、sounds 的目录下运行\n（或者把 exe 拷到你放 config.yaml 的文件夹里）。");
-      return Ok(());
+      if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+          let _ = std::env::set_current_dir(dir);
+        }
+      }
+      info!("no config.yaml found -> preparing a fresh folder here");
     }
+  }
+
+  // 首次运行自动准备：缺 config.yaml / pages / sounds 就按探测到的设备建好
+  let setup_notes = setup::ensure_all();
+
+  if !std::path::Path::new("config.yaml").exists() {
+    fatal(&format!(
+      "配置文件和目录都没法自动创建（{}）。\n\n\
+       多半是程序所在目录没有写权限。把 exe 放到一个有写权限的文件夹里再试。",
+      std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default()
+    ));
+    return Ok(());
   }
 
   let mut config = match Config::from_config_file("config.yaml") {
@@ -185,7 +203,12 @@ fn main() -> Result<(), Box<dyn Error>> {
       conn_out = conn;
     }
     _ => {
-      error!("No midi output port found, have you plugged your midi device ?");
+      fatal(&format!(
+        "找不到 MIDI 输出端口（config.yaml 里写的是 \"{}\"）。\n\n\
+         1) Launchpad 插好了吗（USB 灯亮）？\n\
+         2) 用 --console 启动能看到所有可用端口名，把 midi_out_device 改成一致的。",
+        midi_out_name
+      ));
       return Ok(());
     }
   }
@@ -194,7 +217,20 @@ fn main() -> Result<(), Box<dyn Error>> {
     fatal("config.yaml 里 midi_in_device 是空的。\n\n填入 Launchpad 的 MIDI 输入名（一般就是 \"Launchpad Mini\"）再启动。");
     return Ok(());
   };
-  let launchpad = Arc::new(Launchpad::get_launchpad(midi_in_device_name));
+  let launchpad = {
+    // 名字不认识的话 get_launchpad 会 panic，先拦一下给个看得见的提示
+    let known = ["LPMiniMK2", "LPMiniMK3", "LPX", "Launchpad Mini", "LPMini"];
+    if !known.iter().any(|t| midi_in_device_name.contains(t)) {
+      fatal(&format!(
+        "不支持这个 MIDI 输入设备名：\"{}\"\n\n\
+         现在支持 MK1 / MK2 / MK3 / X。用 --console 启动可以看所有可用端口名，\n\
+         把 config.yaml 的 midi_in_device 改成 Launchpad 的那个（如 \"Launchpad Mini\"）。",
+        midi_in_device_name
+      ));
+      return Ok(());
+    }
+    Arc::new(Launchpad::get_launchpad(midi_in_device_name))
+  };
   info!("Launchpad model detected: {:?}", launchpad);
 
   debug!("Available output ports:");
@@ -213,7 +249,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         output_handle = Some(stream);
       }
       None => {
-        error!("No audio device found");
+        fatal(&format!(
+          "本地监听设备打不开（config.yaml 里写的是 \"{}\"）。\n\n\
+           要么改成正确的设备名，要么把 local_monitor 设成 false（只走虚拟设备）。",
+          config.get_output_device().unwrap_or("(系统默认)")
+        ));
         return Ok(());
       }
     }
@@ -237,7 +277,12 @@ fn main() -> Result<(), Box<dyn Error>> {
       virtual_handle = handle;
     }
     None => {
-      error!("No virtual device found");
+      fatal(&format!(
+        "虚拟设备打不开（config.yaml 里写的是 \"{}\"）。\n\n\
+         没装 VoiceMeeter / VB-Cable 的话，把 virtual_device 改成你的输出设备名\n\
+         （用 --console 启动能看到所有可用设备名）。",
+        virtual_name
+      ));
       return Ok(());
     }
   }
@@ -246,7 +291,7 @@ fn main() -> Result<(), Box<dyn Error>> {
   referential.init(String::from("pages"));
 
   if referential.get_nb_pages() == 0 {
-    error!("No pages found");
+    fatal("pages/ 里一个页面都没有（首次运行应该会自动建一个）。\n\n手动建个文件就行，比如 pages/00_demo，内容留空也可以。");
     return Ok(());
   }
 
@@ -257,6 +302,10 @@ fn main() -> Result<(), Box<dyn Error>> {
   // 托盘程序默认不弹浏览器（从托盘图标/菜单打开）；想启动就弹加 --open
   let open_browser = std::env::args().any(|a| a == "--open");
   let ui = webui::start(tx_note.clone(), open_browser);
+  // 把「首次运行自动准备」做的事写进活动日志，用户能看见
+  for line in &setup_notes {
+    webui::push_activity(&ui, line.clone());
+  }
   #[cfg(windows)]
   tray::start(tx_note.clone(), ui.port(), Arc::clone(&ui));
 

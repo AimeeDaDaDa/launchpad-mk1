@@ -273,6 +273,24 @@ def list_pages():
     return pages
 
 
+def portable_path(p):
+    """数据目录内的绝对路径 -> 相对路径（页面文件存相对路径，整个文件夹搬走也能用）"""
+    try:
+        path = Path(p)
+        if not path.is_absolute():
+            return str(p)
+        rel = path.relative_to(PROJECT_ROOT)
+        return str(rel).replace("\\", "/")
+    except Exception:
+        return str(p)
+
+
+def resolve_path(p):
+    """相对路径按数据目录补全（试听用）"""
+    path = Path(p)
+    return path if path.is_absolute() else (PROJECT_ROOT / path)
+
+
 def save_page(name, pads):
     """pads: {note(str/int): {"path": str, "color": int}}"""
     PAGES_DIR.mkdir(exist_ok=True)
@@ -285,7 +303,7 @@ def save_page(name, pads):
         if not p:
             continue
         color = int(spec.get("color") or DEFAULT_COLOR)
-        lines.append("%d;%s;%d" % (note, p, color))
+        lines.append("%d;%s;%d" % (note, portable_path(p), color))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return safe
 
@@ -776,7 +794,10 @@ class Handler(BaseHTTPRequestHandler):
             midi = list_midi_devices()
             self._send_json({
                 "ok": True,
+                "embedded": False,
                 "audio_libs": bool(AUDIO_OK),
+                # Python 版没有实现 LED 颜色测试（那是 exe 内嵌版才有的），页面据此隐藏那张卡片
+                "led_test": False,
                 "exe_exists": EXE_PATH.exists(),
                 "config": read_config(),
                 "devices": devices,
@@ -923,7 +944,10 @@ class Handler(BaseHTTPRequestHandler):
             dev = body.get("device_index")
             if dev is None and body.get("device"):
                 dev = device_index_by_name(body["device"])
-            r = preview.play(body.get("path") or "", dev)
+            target = body.get("path") or ""
+            if target:
+                target = str(resolve_path(target))
+            r = preview.play(target, dev)
             self._send_json(r)
             return
 

@@ -113,7 +113,7 @@ impl Launchpad {
             0 => 12,                  // off
             3 => 60,                  // white  -> green full
             5 => 15,                  // red
-            13 => 62,                 // yellow
+            13 => 61,                 // yellow（实测 61 最黄：rgb(248,192,15)；62 偏橙）
             87 => 60,                 // green
             other => other.min(127),  // page-specified MK1 velocity, pass through
           }
