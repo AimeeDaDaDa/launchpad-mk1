@@ -21,21 +21,22 @@ pub fn ensure_all() -> Vec<String> {
     notes
 }
 
-/// 建立 sounds/ 语言包目录（只在完全没有 sounds/ 时做）
+/// 建立语音包目录（只在完全没有时做）。
+/// 默认就给一个：`sounds/语音包/` —— 音频直接丢进去就行，对应 config 的 `sounds_dir`。
 fn ensure_sounds() -> Vec<String> {
     let mut notes = Vec::new();
     if Path::new("sounds").is_dir() {
         return notes;
     }
-    let hint = "把音频文件（wav / mp3 / ogg / flac / m4a）放进这个文件夹。\n\
-                一个文件夹 = 设置页里的一个「语言包」。\n";
-    for pack in ["中文", "English", "日本語", "粤语"] {
-        let dir = Path::new("sounds").join(pack);
-        if std::fs::create_dir_all(&dir).is_ok() {
-            let _ = std::fs::write(dir.join("把音频放这里.txt"), hint);
-        }
+    let dir = Path::new("sounds").join("语音包");
+    let hint = "把音频文件（wav / mp3 / ogg / flac / m4a）直接放进这个文件夹。\n\
+                这个文件夹就是 config.yaml 里 sounds_dir 指的「语音包路径」。\n\
+                想放多个语音包（例如按语言分），可以在 sounds/ 下再建子文件夹，\
+                并把 sounds_dir 那行删掉或留空——那时每个子文件夹各是一个语音包。\n";
+    if std::fs::create_dir_all(&dir).is_ok() {
+        let _ = std::fs::write(dir.join("把音频放这里.txt"), hint);
+        notes.push("首次运行：已创建语音包目录 sounds/语音包/".to_string());
     }
-    notes.push("首次运行：已创建 sounds/ 及语言包目录（中文/English/日本語/粤语）".to_string());
     notes
 }
 
@@ -117,7 +118,8 @@ fn ensure_config() -> Vec<String> {
          debug_mode: true\n\
          hold_to: Normal\n\
          local_monitor: {local_monitor}\n\
-         virtual_volume: {vol}\n",
+         virtual_volume: {vol}\n\
+         sounds_dir: sounds/语音包\n",
         midi_in = if midi_in.is_empty() { "Launchpad Mini" } else { &midi_in },
         midi_out = if midi_out.is_empty() { "Launchpad Mini" } else { &midi_out },
         virtual_dev = virtual_dev,
@@ -158,33 +160,24 @@ fn ensure_pages(_config_was_created: bool) -> Vec<String> {
     }
     let _ = std::fs::create_dir_all("pages");
 
-    // sounds/ 下有哪些音频
+    // 有哪些语音包（config 设了 sounds_dir 就只有一个；否则是 sounds/ 下的子文件夹）
     let mut packs: Vec<(String, Vec<String>)> = Vec::new();
-    if let Ok(rd) = std::fs::read_dir("sounds") {
-        for entry in rd.filter_map(|e| e.ok()) {
-            let dir = entry.path();
-            if !dir.is_dir() {
-                continue;
-            }
-            let mut files: Vec<String> = Vec::new();
-            if let Ok(frd) = std::fs::read_dir(&dir) {
-                for f in frd.filter_map(|e| e.ok()).map(|e| e.path()) {
-                    let name = f.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-                    let ext = f.extension().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
-                    if f.is_file() && ["wav", "mp3", "ogg", "flac", "aiff", "aif", "m4a"].contains(&ext.as_str()) {
-                        // 存相对路径（用 / 分隔），整个文件夹搬走也能用
-                        files.push(crate::webui::portable_path(&f.to_string_lossy())
-                            .to_string_lossy()
-                            .replace('\\', "/"));
-                        let _ = name;
-                    }
+    for (name, dir) in crate::webui::pack_dirs() {
+        let mut files: Vec<String> = Vec::new();
+        if let Ok(frd) = std::fs::read_dir(&dir) {
+            for f in frd.filter_map(|e| e.ok()).map(|e| e.path()) {
+                let ext = f.extension().map(|s| s.to_string_lossy().to_lowercase()).unwrap_or_default();
+                if f.is_file() && ["wav", "mp3", "ogg", "flac", "aiff", "aif", "m4a"].contains(&ext.as_str()) {
+                    // 存相对路径（用 / 分隔），整个文件夹搬走也能用
+                    files.push(crate::webui::portable_path(&f.to_string_lossy())
+                        .to_string_lossy()
+                        .replace('\\', "/"));
                 }
             }
-            files.sort();
-            if !files.is_empty() {
-                let pack_name = dir.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-                packs.push((pack_name, files));
-            }
+        }
+        files.sort();
+        if !files.is_empty() {
+            packs.push((name, files));
         }
     }
     packs.sort_by(|a, b| a.0.cmp(&b.0));

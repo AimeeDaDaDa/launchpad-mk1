@@ -177,7 +177,8 @@ def list_midi_devices():
 
 # 界面可改的键（其余键如 bookmark_*、debug_mode 原样保留）
 EDITABLE_KEYS = ("midi_in_device", "midi_out_device", "output_device",
-                 "virtual_device", "hold_to", "local_monitor", "virtual_volume")
+                 "virtual_device", "hold_to", "local_monitor", "virtual_volume",
+                 "sounds_dir")
 
 
 def _yaml_quote(value):
@@ -318,20 +319,44 @@ def next_page_number():
     return best + 1
 
 
+def sounds_root():
+    """语音包根目录：config 里的 sounds_dir（相对数据目录），缺省 sounds"""
+    d = (read_config().get("sounds_dir") or "").strip()
+    p = Path(d) if d else Path("sounds")
+    return p if p.is_absolute() else (PROJECT_ROOT / p)
+
+
+def pack_dirs():
+    """[(包名, 目录)]：设了 sounds_dir 就那一个文件夹算一个语音包；否则 sounds/ 下每个子文件夹各一个"""
+    root = sounds_root()
+    if (read_config().get("sounds_dir") or "").strip():
+        return [(root.name or "语音包", root)]
+    out = []
+    if root.is_dir():
+        for d in sorted(root.iterdir(), key=lambda x: x.name):
+            if d.is_dir():
+                out.append((d.name, d))
+    return out
+
+
+def pack_dir_by_name(name):
+    for n, d in pack_dirs():
+        if n == name:
+            return d
+    return None
+
+
 def scan_packs():
-    """sounds/ 下的语言包 -> [{name, files:[{name, path, size}]}]"""
+    """语音包 -> [{name, dir, files:[{name, path, size}]}]"""
     packs = []
-    if not SOUNDS_DIR.is_dir():
-        return packs
-    for d in sorted(SOUNDS_DIR.iterdir(), key=lambda p: p.name):
-        if not d.is_dir():
-            continue
+    for name, d in pack_dirs():
         files = []
-        for f in sorted(d.iterdir(), key=lambda p: p.name.lower()):
-            if f.is_file() and f.suffix.lower() in AUDIO_EXTS:
-                files.append({"name": f.name, "path": str(f), "size": f.stat().st_size})
+        if d.is_dir():
+            for f in sorted(d.iterdir(), key=lambda p: p.name.lower()):
+                if f.is_file() and f.suffix.lower() in AUDIO_EXTS:
+                    files.append({"name": f.name, "path": str(f), "size": f.stat().st_size})
         if files:
-            packs.append({"name": d.name, "files": files})
+            packs.append({"name": name, "dir": str(d), "files": files})
     return packs
 
 
@@ -870,7 +895,7 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_body()
             label = (body.get("label") or "").strip()
             pack = (body.get("pack") or "").strip()
-            src = SOUNDS_DIR / pack
+            src = pack_dir_by_name(pack) or sounds_root()
             files = [f for f in sorted(src.iterdir(), key=lambda p: p.name.lower())
                      if f.is_file() and f.suffix.lower() in AUDIO_EXTS] if src.is_dir() else []
             if not files:
@@ -925,7 +950,7 @@ class Handler(BaseHTTPRequestHandler):
             if not fname or Path(fname).suffix.lower() not in AUDIO_EXTS:
                 self._send_json({"ok": False, "error": "只支持音频文件: %s" % ",".join(AUDIO_EXTS)}, 400)
                 return
-            dest_dir = SOUNDS_DIR / pack
+            dest_dir = pack_dir_by_name(pack) or sounds_root()
             dest_dir.mkdir(parents=True, exist_ok=True)
             data = self._read_raw()
             if not data:
@@ -958,7 +983,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/open":
             body = self._read_body()
-            target = body.get("path") or str(SOUNDS_DIR)
+            target = body.get("path") or str(sounds_root())
             p = Path(target)
             if not p.is_absolute():
                 p = PROJECT_ROOT / p

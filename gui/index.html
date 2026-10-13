@@ -250,10 +250,15 @@
     </div>
 
     <div class="card">
-      <h3>语言包（sounds/） <span class="muted" id="packHint"></span></h3>
+      <h3>语音包 <span class="muted" id="packHint"></span></h3>
+      <div class="field">
+        <label>语音包路径（留空 = sounds/ 下每个子文件夹各算一个语音包）</label>
+        <input type="text" id="inpSoundsDir" placeholder="sounds/语音包">
+      </div>
       <div id="packList"></div>
       <div class="btn-row">
-        <button id="btnOpenSounds">📂 打开 sounds 文件夹</button>
+        <button id="btnSaveSoundsDir" class="primary">保存路径</button>
+        <button id="btnOpenSounds">📂 打开</button>
       </div>
       <div class="muted" style="margin-top:8px">上传音频到：<b id="uploadTarget">—</b></div>
     </div>
@@ -725,17 +730,34 @@ function renderPacks() {
   const box = $("packList");
   $("packHint").textContent = S.packs.length ? S.packs.length + " 个" : "";
   $("uploadTarget").textContent = uploadTargetPack();
+  const dirInput = $("inpSoundsDir");
+  if (dirInput && document.activeElement !== dirInput) dirInput.value = S.config.sounds_dir || "";
   if (!S.packs.length) {
-    box.innerHTML = "<div class='muted' style='padding:8px'>sounds/ 还是空的</div>";
+    box.innerHTML = "<div class='muted' style='padding:8px'>还没有音频。把文件放进语音包目录，或用上面的上传。</div>";
     return;
   }
   box.innerHTML = "";
   for (const p of S.packs) {
     const d = document.createElement("div");
     d.className = "item" + (p.name === S.curPack ? " sel" : "");
+    d.title = p.dir || p.name;
     d.innerHTML = "<span>" + esc(p.name) + "</span><span class='cnt'>" + p.files.length + "</span>";
     d.onclick = () => { S.curPack = p.name; renderPacks(); };
     box.appendChild(d);
+  }
+}
+
+async function saveSoundsDir() {
+  const v = $("inpSoundsDir").value.trim();
+  const j = await api("/api/config", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({sounds_dir: v}),
+  });
+  if (j.ok) {
+    S.config = j.config;
+    S.configSnapshot = Object.assign({}, j.config);
+    await boot();
+    toast(v ? "语音包路径已设为 " + v : "已改回「按子文件夹分语音包」");
   }
 }
 
@@ -926,7 +948,9 @@ $("btnNewPage").onclick = newPage;
 $("btnFillPage").onclick = fillPage;
 $("btnRenamePage").onclick = renamePage;
 $("btnDelPage").onclick = deletePage;
-$("btnOpenSounds").onclick = () => api("/api/open", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({path: "sounds"})});
+$("btnOpenSounds").onclick = () => api("/api/open", {method: "POST", headers: {"Content-Type": "application/json"},
+  body: JSON.stringify({path: S.config.sounds_dir || "sounds"})});
+$("btnSaveSoundsDir").onclick = saveSoundsDir;
 $("btnReload").onclick = reloadAll;
 $("btnQuit").onclick = quitApp;
 $("btnLed").onclick = clearLeds;

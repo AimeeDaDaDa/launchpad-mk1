@@ -22,9 +22,9 @@ use crate::{NoteEvent, QUIT_NOTE, RELOAD_NOTE};
 const INDEX_HTML: &str = include_str!("../gui/index.html");
 const AUDIO_EXTS: [&str; 7] = ["wav", "mp3", "ogg", "flac", "aiff", "aif", "m4a"];
 /// 界面能改的 config 键（其余键原样保留）
-const EDITABLE_KEYS: [&str; 7] = [
+const EDITABLE_KEYS: [&str; 8] = [
     "midi_in_device", "midi_out_device", "output_device", "virtual_device",
-    "hold_to", "local_monitor", "virtual_volume",
+    "hold_to", "local_monitor", "virtual_volume", "sounds_dir",
 ];
 const DEFAULT_PORT: u16 = 8787;
 
@@ -454,12 +454,7 @@ fn save_page(name: &str, pads: &Value) -> Result<String, String> {
 
 fn packs_json() -> Value {
     let mut arr = Vec::new();
-    let Ok(rd) = std::fs::read_dir("sounds") else {
-        return Value::Array(arr);
-    };
-    let mut dirs: Vec<PathBuf> = rd.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).collect();
-    dirs.sort();
-    for dir in dirs {
+    for (name, dir) in pack_dirs() {
         let mut files: Vec<(String, Value)> = Vec::new();
         if let Ok(frd) = std::fs::read_dir(&dir) {
             for f in frd.filter_map(|e| e.ok()).map(|e| e.path()) {
@@ -482,11 +477,51 @@ fn packs_json() -> Value {
             continue;
         }
         arr.push(json!({
-            "name": dir.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
+            "name": name,
+            "dir": dir.to_string_lossy(),
             "files": files.into_iter().map(|(_, v)| v).collect::<Vec<_>>(),
         }));
     }
     Value::Array(arr)
+}
+
+/// 语音包目录列表：
+///   - config 里设了 `sounds_dir` -> 那个文件夹本身就是一个语音包（音频直接放里面）
+///   - 没设 -> 按老结构：`sounds/` 下每个子文件夹各是一个语音包
+pub fn pack_dirs() -> Vec<(String, PathBuf)> {
+    let root = sounds_root();
+    let configured = config_get("sounds_dir").map(|v| !v.trim().is_empty()).unwrap_or(false);
+    if configured {
+        let name = root
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "语音包".to_string());
+        return vec![(name, root)];
+    }
+    let mut out = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&root) {
+        let mut dirs: Vec<PathBuf> = rd.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).collect();
+        dirs.sort();
+        for d in dirs {
+            let name = d.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            out.push((name, d));
+        }
+    }
+    out
+}
+
+/// 语音包根目录（config 的 sounds_dir，相对路径按数据目录解析；缺省 "sounds"）
+pub fn sounds_root() -> PathBuf {
+    match config_get("sounds_dir") {
+        Some(v) if !v.trim().is_empty() => resolve_path(v.trim()),
+        _ => resolve_path("sounds"),
+    }
+}
+
+/// 按语音包名找到目录
+fn pack_dir_by_name(pack: &str) -> Option<PathBuf> {
+    pack_dirs().into_iter().find(|(n, _)| n == pack).map(|(_, d)| d)
 }
 
 // ------------------------------------------------------------------ 设备
@@ -873,7 +908,7 @@ fn handle(mut request: Request, shared: &Arc<Shared>) {
             "/api/pages/fill" => {
                 let pack = body.get("pack").map(value_to_string).unwrap_or_default();
                 let label = body.get("label").map(value_to_string).unwrap_or_else(|| pack.clone());
-                let dir = Path::new("sounds").join(sanitize(&pack));
+                let dir = pack_dir_by_name(&pack).unwrap_or_else(sounds_root);
                 let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
                     .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path())
                         .filter(|p| p.is_file() && audio_ext_ok(&p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()))
@@ -962,7 +997,7 @@ fn handle(mut request: Request, shared: &Arc<Shared>) {
                     let _ = request.respond(json_response(json!({"ok": false, "error": "空文件"})));
                     return;
                 }
-                let dir = Path::new("sounds").join(&pack);
+                let dir = pack_dir_by_name(&pack).unwrap_or_else(sounds_root);
                 if let Err(e) = std::fs::create_dir_all(&dir) {
                     let _ = request.respond(json_response(json!({"ok": false, "error": e.to_string()})));
                     return;

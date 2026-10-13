@@ -173,18 +173,33 @@ launch-soundpad.exe --open       # 启动时顺便把设置页打开
 
 | 缺什么 | 自动做什么 |
 |---|---|
-| `config.yaml` | 探测 MIDI 端口和音频设备，生成一份：优先挑 VoiceMeeter/VB-Cable 当虚拟设备；没有的话就关掉本地监听、只往默认输出播一遍 |
-| `sounds/` | 建好 `中文 / English / 日本語 / 粤语` 四个语言包目录 + 「把音频放这里.txt」 |
-| `pages/` | `sounds/` 里有音频就按每个语言包生成一页（按文件名顺序填 64 个键）；没有就先放一个空的 `00_demo` |
+| `config.yaml` | 探测 MIDI 端口和音频设备，生成一份：优先挑 VoiceMeeter/VB-Cable 当虚拟设备；没有的话就关掉本地监听、只往默认输出播一遍。同时写上 `sounds_dir: sounds/语音包` |
+| `sounds/语音包/` | 建好这个语音包文件夹 + 「把音频放这里.txt」 |
+| `pages/` | 语音包里有音频就自动生成一页（按文件名顺序填 64 个键）；没有就先放一个空的 `00_demo` |
 
 做过什么都写在设置页底部的**活动日志**里。设备名不对、音频设备打不开、`config.yaml` 解析失败这类问题，
 会**弹对话框说明该改哪个字段**，不会静默退出（原来是直接 panic 或者悄无声息地结束）。
 
-### 路径是相对的，整个文件夹可以搬走
+### 语音包路径（`sounds_dir`）— 一个路径就够了
 
-页面文件里存的是**相对路径**（例如 `sounds/中文/clip_0.wav`），所以在设置页里绑定/上传音频时也会自动存成相对路径。
-把整个目录（exe + `config.yaml` + `pages/` + `sounds/`）拷到别的盘、甚至别的电脑，按键绑定依然有效。
-（`gen_pages.py` 生成的页面同理。）
+默认只需要**一个文件夹**放音效：
+
+```
+<exe 所在目录>/
+  config.yaml            ← 数据根目录，程序自动定位；这里写着 sounds_dir
+  sounds/语音包/          ← 把音频（wav/mp3/ogg/flac/m4a）直接丢进来
+      clip_0.wav
+      clip_1.wav
+  pages/01_语音包         ← 每行：note;音频路径;颜色
+```
+
+- `config.yaml` 里的 **`sounds_dir`** 就是那个路径：可以写相对路径（相对数据目录），也可以写绝对路径，
+  例如 `sounds_dir: D:\我的音效` —— 指向哪儿就用哪儿的音频。
+- 设置页「语音包」卡片上也能直接改这个路径（改完点「保存路径」），有「📂 打开」按钮直接打开那个文件夹。
+- **留空**（或删掉那一行）= 回到多语音包模式：`sounds/` 下每个子文件夹各算一个语音包（例如 `sounds/中文`、`sounds/日本語`），
+  一包对应一页。要按语言分类时用这个。
+- 页面里存的是**相对路径**（能相对就相对，指到数据目录外才用绝对路径），所以整个文件夹拷到别的盘/别的电脑，绑定依然有效。
+  在设置页里绑定或上传音频时也会自动这么存；`gen_pages.py` 生成的页面同理。
 
 ### 附：Python 版控制台（开发用，可选）
 
@@ -213,7 +228,8 @@ launch-soundpad.exe --open       # 启动时顺便把设置页打开
 | `src/launchpad/mod.rs` | 新增 `MiniMk1` 变体；MK1 的 note 映射 / 书签 / 停止键；`led_message()` 做三色 velocity 转换；`grid_notes()` 生成 MK1 网格；设备名识别加 `Launchpad Mini` |
 | `src/midi.rs` | `clear_grid` 改为按模型清网格（修掉上游从 note 1 开始、漏掉 MK1 左上角 note 0 的问题）；MIDI 设备名改子串匹配；表头改为每次刷新都重画（修掉上游翻页后表头熄灭） |
 | `src/main.rs` | LED 发送走 `led_message()`；`end_session` 传 launchpad；`output_device` 为空时用默认设备（上游会 `unwrap()` panic）；加型号识别日志；新增 `local_monitor` 开关（关闭时不建本地输出流，只走虚拟设备）+ `virtual_volume` 控制虚拟设备音量（sinks 改为 `(Option<Sink>, Sink)`）；起内嵌设置页 + 托盘；哨兵 note 126/127 = 重载/退出；自动定位 config.yaml 所在目录；单实例保护；配置错了弹对话框而不是静默 panic |
-| `src/webui.rs` | **新增**：内嵌设置页（`include_str!` 把 `gui/index.html` 编进 exe）+ 本地 HTTP API（设备枚举走 cpal/midir、config/pages 读写、试听、熄灯、按键事件、重载、退出） |
+| `src/webui.rs` | **新增**：内嵌设置页（`include_str!` 把 `gui/index.html` 编进 exe）+ 本地 HTTP API（设备枚举走 cpal/midir、config/pages 读写、试听、熄灯、按键事件、重载、退出、LED 颜色测试）；新增 `sounds_dir`（语音包路径）支持——设了就只认那一个文件夹，留空则 `sounds/` 下每个子文件夹各一包 |
+| `src/setup.rs` | **新增**：首次运行自动准备——缺 `config.yaml` 就探测设备生成、缺语音包目录就建 `sounds/语音包/`、`pages/` 为空就用语音包里的音频生成页面 |
 | `src/tray.rs` | **新增**：Windows 托盘（隐藏窗口 + Shell_NotifyIconW + 右键菜单），图标是运行时用 GDI 画的 |
 | `Cargo.toml` | 新增 `serde_json`、`tiny_http`（内嵌 HTTP）、`windows-sys`（托盘/对话框/单实例） |
 | `gui/index.html` | 共用界面：设备/页面/网格编辑 + 按键测试；顶栏适配内嵌模式（重新加载/退出）；保存配置只提交改过的字段（防止旧页面把别处的改动覆盖掉）；`/api/preview` 改传设备名 |
@@ -223,7 +239,7 @@ launch-soundpad.exe --open       # 启动时顺便把设置页打开
 | `src/referential.rs` | 页面文件排序（`read_dir` 顺序不固定）；目录不存在时不再 panic |
 | `build.bat` | 绕开 `vcvars64.bat`（它调 `reg.exe` 会被沙箱拦），手写 `LIB`/`INCLUDE`/`PATH` |
 | `config.yaml` | MK1 的设备名和虚拟设备 |
-| `gen_pages.py` | 新增：语言包文件夹 → pages 页面 |
+| `gen_pages.py` | 新增：语音包文件夹 → pages 页面（写相对路径） |
 
 ## 编译
 
