@@ -6,4 +6,6 @@ if not exist "%PY%" (
   where python >nul 2>nul && set PY=python
 )
 "%PY%" gui\gui_server.py 8787
-pause
+rem 正常退出就直接关窗口；只有出错时才停住让你看报错
+rem（原来是无条件 pause，在后台/自动化里会一直挂着）
+if errorlevel 1 pause
